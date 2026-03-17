@@ -21,6 +21,19 @@ app.add_middleware(
 
 logger.info("Starting NovaMentor API...")
 
+# --- Root Route ---
+@app.get("/", tags=["Root"])
+def root():
+    return {
+        "app": "NovaMentor API",
+        "version": "1.0.0",
+        "endpoints": {
+            "health": "/health",
+            "chat": "/chat (POST)",
+            "docs": "/docs"
+        }
+    }
+
 # --- Include Routers ---
 app.include_router(health.router, prefix="/health", tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
