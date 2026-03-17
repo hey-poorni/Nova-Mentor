@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import chat, health
+from app.routes import chat, health, quiz
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,3 +37,4 @@ def root():
 # --- Include Routers ---
 app.include_router(health.router, prefix="/health", tags=["Health"])
 app.include_router(chat.router, prefix="/chat", tags=["Chat"])
+app.include_router(quiz.router, prefix="/quiz", tags=["Quiz"])
