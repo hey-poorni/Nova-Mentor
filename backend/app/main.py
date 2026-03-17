@@ -1,6 +1,7 @@
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routes import chat, health
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,14 +21,6 @@ app.add_middleware(
 
 logger.info("Starting NovaMentor API...")
 
-# --- Routes ---
-
-@app.get("/health", tags=["Health"])
-def health_check():
-    logger.info("Health check endpoint called")
-    return {"status": "ok"}
-
-@app.post("/chat", tags=["Chat"])
-def chat_endpoint():
-    logger.info("Chat endpoint called")
-    return {"message": "working"}
+# --- Include Routers ---
+app.include_router(health.router, prefix="/health", tags=["Health"])
+app.include_router(chat.router, prefix="/chat", tags=["Chat"])
