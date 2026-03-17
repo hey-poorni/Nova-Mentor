@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Model IDs ───────────────────────────────────────────────────────────────
 PRIMARY_MODEL   = "amazon.nova-micro-v1:0"
-FALLBACK_MODEL  = "nvidia.nemotron-nano-12b-v2"
+FALLBACK_MODEL  = "amazon.nova-lite-v1:0"   # Same Nova family, same request/response format
 
 
 # ─── Client Factory ──────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ def invoke_model(prompt: str) -> str:
     except Exception as e:
         logger.warning(f"[Bedrock] Primary model failed: {type(e).__name__}: {e}. Trying fallback.")
 
-    # ── Attempt 2: Fallback (Nemotron) ───────────────────────────────────────
+    # ── Attempt 2: Fallback (Nova Lite – same family, same format) ───────────
     try:
         logger.info(f"[Bedrock] Invoking fallback model: {FALLBACK_MODEL}")
 
@@ -122,11 +122,11 @@ def invoke_model(prompt: str) -> str:
             modelId=FALLBACK_MODEL,
             contentType="application/json",
             accept="application/json",
-            body=_nemotron_body(prompt),
+            body=_nova_body(prompt),   # Nova Lite uses same request format as Nova Micro
         )
 
         response_body = json.loads(raw["body"].read().decode("utf-8"))
-        text = _parse_nemotron_response(response_body)
+        text = _parse_nova_response(response_body)   # Same response structure
 
         logger.info("[Bedrock] Fallback model responded successfully.")
         return text

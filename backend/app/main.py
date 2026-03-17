@@ -1,9 +1,33 @@
+import logging
 from fastapi import FastAPI
-from app.routes import chat, quiz, analysis, health
+from fastapi.middleware.cors import CORSMiddleware
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize FastAPI app
 app = FastAPI(title="NovaMentor API", version="1.0.0")
 
-app.include_router(health.router, prefix="/health", tags=["Health"])
-app.include_router(chat.router, prefix="/chat", tags=["Chat"])
-app.include_router(quiz.router, prefix="/quiz", tags=["Quiz"])
-app.include_router(analysis.router, prefix="/analysis", tags=["Analysis"])
+# Setup CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+logger.info("Starting NovaMentor API...")
+
+# --- Routes ---
+
+@app.get("/health", tags=["Health"])
+def health_check():
+    logger.info("Health check endpoint called")
+    return {"status": "ok"}
+
+@app.post("/chat", tags=["Chat"])
+def chat_endpoint():
+    logger.info("Chat endpoint called")
+    return {"message": "working"}
