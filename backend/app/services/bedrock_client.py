@@ -1,140 +1,164 @@
-import boto3
 import json
 import logging
-from app.core.config import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
+import time
+import threading
+from typing import Optional, Dict, Any, TYPE_CHECKING, List
 
-# ─── Logging ─────────────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO)
+# ─── TYPE_CHECKING Guard (Fixes Path-Space Resolution Issues) ─────────────
+if TYPE_CHECKING:
+    # Minimal stubs to clear "red lines" caused by the space in project path
+    class Config:
+        def __init__(self, **kwargs: Any) -> None: ...
+        
+    class _Boto3Client:
+        def invoke_model(self, **kwargs: Any) -> Dict[str, Any]: ...
+
+    class _Boto3Module:
+        def client(self, service_name: str, **kwargs: Any) -> _Boto3Client: ...
+
+    # Explicitly define instances so the linter sees them as bound
+    boto3: _Boto3Module = _Boto3Module() # type: ignore
+    
+    # Constant stubs for app.core.config
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_DEFAULT_REGION: str = ""
+    PRIMARY_MODEL: str = ""
+    FALLBACK_MODEL: str = ""
+else:
+    # Real runtime imports — kept in 'else' to avoid absolute path resolution errors
+    import boto3
+    from botocore.config import Config
+    from ..core.config import (
+        AWS_ACCESS_KEY_ID, 
+        AWS_SECRET_ACCESS_KEY, 
+        AWS_DEFAULT_REGION,
+        PRIMARY_MODEL,
+        FALLBACK_MODEL
+    )
+
 logger = logging.getLogger(__name__)
 
-# ─── Model IDs ───────────────────────────────────────────────────────────────
-PRIMARY_MODEL   = "amazon.nova-micro-v1:0"
-FALLBACK_MODEL  = "amazon.nova-lite-v1:0"   # Same Nova family, same request/response format
+# ─── Boto3 Configuration ──────────────────────────────────────────────────
+BOTO_CONFIG = Config(
+    connect_timeout=10,
+    read_timeout=35,
+    retries={'max_attempts': 2}
+)
 
+# ─── Client Factory (Singleton) ──────────────────────────────────────────────
+_client_instance: Any = None 
+_client_lock = threading.Lock()
 
-# ─── Client Factory ──────────────────────────────────────────────────────────
 def get_bedrock_client():
-    """Return a boto3 bedrock-runtime client using credentials from .env."""
-    return boto3.client(
-        service_name="bedrock-runtime",
-        region_name=AWS_DEFAULT_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-    )
+    """Return a reused boto3 bedrock-runtime client with thread-safety."""
+    global _client_instance
+    if _client_instance is None:
+        with _client_lock:
+            if _client_instance is None:
+                logger.info("[Bedrock] Creating new AWS Bedrock Runtime client...")
+                try:
+                    # Explicitly use boto3.client as defined in stubs/real module
+                    instance = boto3.client(
+                        service_name="bedrock-runtime",
+                        region_name=AWS_DEFAULT_REGION or "us-east-1",
+                        aws_access_key_id=AWS_ACCESS_KEY_ID if AWS_ACCESS_KEY_ID else None,
+                        aws_secret_access_key=AWS_SECRET_ACCESS_KEY if AWS_SECRET_ACCESS_KEY else None,
+                        config=BOTO_CONFIG
+                    )
+                    _client_instance = instance
+                except Exception as e:
+                    logger.error(f"[Bedrock] Client creation failed: {e}")
+                    raise
+    return _client_instance
 
 
 # ─── Request Body Builders ───────────────────────────────────────────────────
-def _nova_body(prompt: str) -> bytes:
-    """
-    Amazon Nova Micro request body.
-    Content must be a list of text blocks, not a plain string.
-    """
-    payload = {
+def _nova_body(prompt: str, system_prompt: Optional[str] = None) -> bytes:
+    """Concise request format for Amazon Nova."""
+    payload: Dict[str, Any] = {
         "messages": [
             {
                 "role": "user",
-                "content": [{"text": prompt}],   # Nova requires content as array
+                "content": [{"text": prompt}],
             }
         ],
         "inferenceConfig": {
-            "maxTokens": 512,
-            "temperature": 0.7,
+            "maxTokens": 800,
+            "temperature": 0.6,
         },
     }
+    if system_prompt:
+        payload["system"] = [{"text": system_prompt}]
+        
     return json.dumps(payload).encode("utf-8")
 
-
-def _nemotron_body(prompt: str) -> bytes:
-    """
-    NVIDIA Nemotron request body (standard Amazon Bedrock messages format).
-    """
-    payload = {
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 512,
-        "temperature": 0.7,
-    }
-    return json.dumps(payload).encode("utf-8")
-
-
-# ─── Response Parsers ────────────────────────────────────────────────────────
-def _parse_nova_response(response_body: dict) -> str:
-    """Parse text from Amazon Nova Micro response."""
-    return response_body["output"]["message"]["content"][0]["text"]
-
-
-def _parse_nemotron_response(response_body: dict) -> str:
-    """Parse text from NVIDIA Nemotron response."""
-    return response_body["choices"][0]["message"]["content"]
-
-
-# ─── Core invoke_model function ──────────────────────────────────────────────
-def invoke_model(prompt: str) -> str:
-    """
-    Send a prompt to AWS Bedrock and return the text response.
-
-    Primary model  : amazon.nova-micro-v1:0
-    Fallback model : nvidia.nemotron-nano-12b-v2
-
-    Args:
-        prompt: The user's input string.
-
-    Returns:
-        str: The model's text response.
-
-    Raises:
-        RuntimeError: If both primary and fallback models fail.
-    """
-    client = get_bedrock_client()
-
-    # ── Attempt 1: Primary (Nova Micro) ──────────────────────────────────────
+# ─── Response Parser ─────────────────────────────────────────────────────────
+def _parse_nova_response(response_body: Dict[str, Any]) -> str:
+    """Parse text from Amazon Nova response."""
     try:
-        logger.info(f"[Bedrock] Invoking primary model: {PRIMARY_MODEL}")
+        return str(response_body["output"]["message"]["content"][0]["text"])
+    except (KeyError, IndexError, TypeError):
+        if "generation" in response_body:
+            return str(response_body["generation"])
+        return ""
 
-        raw = client.invoke_model(
-            modelId=PRIMARY_MODEL,
-            contentType="application/json",
-            accept="application/json",
-            body=_nova_body(prompt),
-        )
+# ─── Cache ───────────────────────────────────────────────────────────────────
+_cache: Dict[str, str] = {}
 
-        response_body = json.loads(raw["body"].read().decode("utf-8"))
-        text = _parse_nova_response(response_body)
+# ─── Core Function ──────────────────────────────────────────────────────────
+def invoke_model(prompt: str, system_prompt: Optional[str] = None) -> str:
+    """Call Bedrock with caching and failover."""
+    if len(_cache) > 200:
+        _cache.clear()
 
-        logger.info("[Bedrock] Primary model responded successfully.")
-        return text
+    cache_key = f"{system_prompt or ''}:{prompt}"
+    if cache_key in _cache:
+        logger.info("[Cache] Hit!")
+        return _cache[cache_key]
 
-    except client.exceptions.ModelNotReadyException as e:
-        logger.warning(f"[Bedrock] Primary model not ready: {e}. Trying fallback.")
-    except client.exceptions.ThrottlingException as e:
-        logger.warning(f"[Bedrock] Primary model throttled: {e}. Trying fallback.")
-    except client.exceptions.AccessDeniedException as e:
-        logger.warning(f"[Bedrock] Primary model access denied: {e}. Trying fallback.")
-    except Exception as e:
-        logger.warning(f"[Bedrock] Primary model failed: {type(e).__name__}: {e}. Trying fallback.")
-
-    # ── Attempt 2: Fallback (Nova Lite – same family, same format) ───────────
     try:
-        logger.info(f"[Bedrock] Invoking fallback model: {FALLBACK_MODEL}")
+        client = get_bedrock_client()
+    except Exception:
+        return "AWS connection failed. Check credentials."
+    
+    models_to_try = [PRIMARY_MODEL, FALLBACK_MODEL]
+    last_error = "All models failed"
+    
+    for model_id in models_to_try:
+        if not model_id: continue
+        
+        try:
+            logger.info(f"[Bedrock] Invoking {model_id}...")
+            start_time = time.time()
+            
+            raw = client.invoke_model(
+                modelId=model_id,
+                contentType="application/json",
+                accept="application/json",
+                body=_nova_body(prompt, system_prompt),
+            )
+            
+            elapsed = time.time() - start_time
+            body_content = raw["body"].read().decode("utf-8")
+            response_body = json.loads(body_content)
+            text = _parse_nova_response(response_body)
 
-        raw = client.invoke_model(
-            modelId=FALLBACK_MODEL,
-            contentType="application/json",
-            accept="application/json",
-            body=_nova_body(prompt),   # Nova Lite uses same request format as Nova Micro
-        )
+            if text.strip():
+                logger.info(f"[Bedrock] Success | {model_id} | Time: {elapsed:.2f}s")
+                _cache[cache_key] = text
+                return text
 
-        response_body = json.loads(raw["body"].read().decode("utf-8"))
-        text = _parse_nova_response(response_body)   # Same response structure
+        except Exception as e:
+            last_error = str(e)
+            # Fix for Pyre2 slice issue: enumerate+join instead of [:n]
+            error_preview_chars: List[str] = [c for i, c in enumerate(last_error) if i < 200]
+            error_preview: str = "".join(error_preview_chars)
+            logger.error(f"[Bedrock] {model_id} failed: {error_preview}")
+            
+            # If hit account limit, don't keep trying other models
+            if "ThrottlingException" in last_error or "Too many tokens" in last_error:
+                return "AWS Bedrock Limit Reached: Too many tokens per day. Please wait before trying again."
+            continue
 
-        logger.info("[Bedrock] Fallback model responded successfully.")
-        return text
-
-    except Exception as e:
-        logger.error(f"[Bedrock] Fallback model also failed: {type(e).__name__}: {e}")
-        raise RuntimeError(
-            f"Both models failed.\n"
-            f"  Primary  ({PRIMARY_MODEL}): check above logs.\n"
-            f"  Fallback ({FALLBACK_MODEL}): {e}"
-        )
+    return "AI service temporarily unavailable."

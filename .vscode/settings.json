@@ -1,0 +1,10 @@
+{
+    "python.analysis.extraPaths": [
+        "e:/Projects E/Novamentor/src/Nova-Mentor/backend",
+        "e:/Projects E/Novamentor/src/Nova-Mentor/backend/app"
+    ],
+    "python.analysis.autoImportCompletions": true,
+    "python.terminal.activateEnvInSelectedTerminal": true,
+    "python.analysis.useLibraryCodeForTypes": true,
+    "python.defaultInterpreterPath": "python"
+}

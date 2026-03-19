@@ -3,12 +3,23 @@
 
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from typing import TYPE_CHECKING, Any, Dict, List
 
-from app.services.analyzer_service import analyze_response
+# ─── Fix Path Resolution (Ensures app modules can be found despite space in path) ───
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+# ─── TYPE_CHECKING Guard ──────────────────────────────────────────────────
+if TYPE_CHECKING:
+    # Stubs for the IDE/linter to resolve types despite the "Projects E" path spaces
+    def analyze_response(question: str, answer: str) -> Dict[str, Any]: ...
+else:
+    # Real runtime imports — uses the standard absolute path registered above
+    from app.services.analyzer_service import analyze_response
 
 # Sample test cases
-TEST_CASES = [
+TEST_CASES: List[Dict[str, str]] = [
     {
         "question": "What is sorting in computer science?",
         "answer": "Sorting is the process of arranging elements in a specific order, like ascending or descending.",
@@ -26,7 +37,7 @@ TEST_CASES = [
     },
 ]
 
-def run_tests():
+def run_tests() -> None:
     for case in TEST_CASES:
         print("\n" + "-" * 50)
         print(f"TEST: {case['label']}")
