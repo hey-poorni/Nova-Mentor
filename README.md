@@ -23,7 +23,7 @@ NovaMentor combines Large Language Models, prompt engineering, and learning anal
 
 ## Tech Stack
 
-Python, JavaScript, HTML, CSS, Streamlit, FastAPI, AWS, Bedrock, Nova, Boto3, IAM, JSON, SQLite, REST, PromptEngineering, Logging, GitHub, Antigravity
+Python, Reacct, JavaScript, HTML, CSS, Streamlit, FastAPI, AWS, Bedrock, Nova, Boto3, IAM, JSON, SQLite, REST, PromptEngineering, Logging, GitHub, Antigravity
 
 ---
 
